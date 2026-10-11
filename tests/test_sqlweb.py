@@ -22,7 +22,7 @@ class SQLWebIntegrationTests(unittest.TestCase):
             Path(cls.temporary_directory.name) / "test.db"
         )
 
-        initialize_database(cls.database_path)
+        initialize_database(cls.database_path, middleware_version=1)
 
         cls.server = ThreadingHTTPServer(
             ("127.0.0.1", 0),

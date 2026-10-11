@@ -19,7 +19,7 @@ class MiddlewareHTTPTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.database = Path(self.tmp.name) / "middleware.db"
 
-        initialize_database(self.database)
+        initialize_database(self.database, middleware_version=1)
 
         self.server = ThreadingHTTPServer(
             ("127.0.0.1", 0),

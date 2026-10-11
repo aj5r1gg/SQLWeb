@@ -25,7 +25,7 @@ class HTTPTransformTests(unittest.TestCase):
         cls.thread = None
 
         try:
-            server.initialize_database(cls.db_path)
+            server.initialize_database(cls.db_path, middleware_version=1)
 
             with sqlite3.connect(cls.db_path) as db:
                 db.executescript(

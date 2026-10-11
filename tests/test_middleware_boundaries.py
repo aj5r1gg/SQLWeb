@@ -22,7 +22,7 @@ class MiddlewareBoundaryTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.database = Path(self.tmp.name) / "boundary.db"
-        initialize_database(self.database)
+        initialize_database(self.database, middleware_version=1)
 
     def tearDown(self):
         self.tmp.cleanup()

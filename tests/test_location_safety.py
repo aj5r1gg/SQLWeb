@@ -15,7 +15,7 @@ class LocationSafetyTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.db = Path(self.tmp.name) / "location.db"
-        server.initialize_database(self.db)
+        server.initialize_database(self.db, middleware_version=1)
 
         self.httpd = ThreadingHTTPServer(
             ("127.0.0.1", 0),

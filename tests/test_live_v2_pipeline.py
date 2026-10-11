@@ -21,7 +21,7 @@ class LiveV2PipelineTests(unittest.TestCase):
         cls.thread = None
 
         try:
-            server.initialize_database(cls.db_path)
+            server.initialize_database(cls.db_path, middleware_version=1)
             upgrade(cls.db_path)
 
             with sqlite3.connect(cls.db_path) as db:
@@ -147,6 +147,109 @@ class LiveV2PipelineTests(unittest.TestCase):
                 server.select_request_pipeline(db),
                 server.REQUEST_PIPELINE_V2_SQL,
             )
+
+
+    def test_07_fresh_install_uses_v2(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "fresh.db"
+
+            server.initialize_database(path)
+
+            with sqlite3.connect(path) as db:
+                self.assertEqual(
+                    server.select_request_pipeline(db),
+                    server.REQUEST_PIPELINE_V2_SQL,
+                )
+
+                db.execute(
+                    """
+                    INSERT INTO middleware_rules (
+                        rule_id, priority, enabled, method,
+                        path, action, status,
+                        content_type, body, destination
+                    )
+                    VALUES (
+                        901, 10, 1, 'GET',
+                        '/new-redirect', 'REDIRECT', 301,
+                        'text/plain', '', '/health'
+                    )
+                    """
+                )
+                db.commit()
+
+            server.initialize_database(path)
+
+            with sqlite3.connect(path) as db:
+                self.assertEqual(
+                    server.select_request_pipeline(db),
+                    server.REQUEST_PIPELINE_V2_SQL,
+                )
+                self.assertEqual(
+                    db.execute(
+                        """
+                        SELECT destination
+                        FROM middleware_rules
+                        WHERE rule_id = 901
+                        """
+                    ).fetchone(),
+                    ("/health",),
+                )
+
+    def test_08_existing_v1_is_preserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "legacy.db"
+
+            server.initialize_database(
+                path, middleware_version=1
+            )
+
+            with sqlite3.connect(path) as db:
+                self.assertEqual(
+                    server.select_request_pipeline(db),
+                    server.REQUEST_PIPELINE_SQL,
+                )
+
+            server.initialize_database(path)
+
+            with sqlite3.connect(path) as db:
+                self.assertEqual(
+                    server.select_request_pipeline(db),
+                    server.REQUEST_PIPELINE_SQL,
+                )
+
+
+    def test_09_invalid_schema_does_not_initialize_routes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "invalid.db"
+
+            db = sqlite3.connect(path)
+            try:
+                db.execute(
+                    "CREATE TABLE middleware_rules (unexpected TEXT)"
+                )
+                db.commit()
+
+                before = db.execute(
+                    "SELECT type, name, sql FROM sqlite_schema "
+                    "ORDER BY type, name"
+                ).fetchall()
+            finally:
+                db.close()
+
+            with self.assertRaisesRegex(
+                ValueError, "Unsupported middleware schema"
+            ):
+                server.initialize_database(path)
+
+            db = sqlite3.connect(path)
+            try:
+                after = db.execute(
+                    "SELECT type, name, sql FROM sqlite_schema "
+                    "ORDER BY type, name"
+                ).fetchall()
+                self.assertEqual(after, before)
+            finally:
+                db.close()
 
 
 if __name__ == "__main__":

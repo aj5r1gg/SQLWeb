@@ -14,7 +14,7 @@ class TransportTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         db = Path(self.tmp.name) / "transport.db"
-        initialize_database(db)
+        initialize_database(db, middleware_version=1)
 
         self.server = ThreadingHTTPServer(
             ("127.0.0.1", 0), make_handler(db)

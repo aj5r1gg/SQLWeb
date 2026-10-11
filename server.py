@@ -78,10 +78,34 @@ def select_request_pipeline(db):
 
 
 
-def initialize_database(path):
+def initialize_database(path, *, middleware_version=2):
+    """Create v2 by default; preserve existing middleware versions."""
+    if middleware_version not in (1, 2):
+        raise ValueError("Unsupported middleware version")
+
     with closing(sqlite3.connect(path)) as db:
+        existing = db.execute(
+            """
+            SELECT 1 FROM sqlite_schema
+            WHERE type = 'table' AND name = 'middleware_rules'
+            """
+        ).fetchone() is not None
+
+        if existing:
+            select_request_pipeline(db)
+            db.executescript(ROUTES)
+            return
+
         db.executescript(ROUTES)
         db.executescript(MIDDLEWARE)
+
+        if middleware_version == 2:
+            migration = (
+                ROOT / "sql/middleware_upgrade_v2.sql"
+            ).read_text(encoding="utf-8")
+            db.executescript(migration)
+
+        select_request_pipeline(db)
 
 
 def make_handler(database_path):

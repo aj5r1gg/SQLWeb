@@ -15,7 +15,7 @@ class ResponseSafetyTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.db = Path(self.tmp.name) / "safety.db"
-        initialize_database(self.db)
+        initialize_database(self.db, middleware_version=1)
 
         self.server = ThreadingHTTPServer(
             ("127.0.0.1", 0), make_handler(self.db)
