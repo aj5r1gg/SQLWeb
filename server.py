@@ -45,7 +45,7 @@ def make_handler(database_path):
                 if response is None or len(response) != 7:
                     raise ValueError("Invalid SQL response")
 
-                _, status, content_type, body, _, _, allow = response
+                _, status, content_type, body, location, _, allow = response
 
                 if type(status) is not int or not 200 <= status <= 599:
                     raise ValueError("Invalid HTTP status")
@@ -64,6 +64,33 @@ def make_handler(database_path):
                     if any(c in allow for c in "\r\n\0"):
                         raise ValueError("Unsafe Allow header")
 
+                if location is not None and status not in (
+                    301, 302, 303, 307, 308
+                ):
+                    raise ValueError("Unexpected Location header")
+
+                if status in (301, 302, 303, 307, 308):
+                    if location is None:
+                        raise ValueError("Missing redirect Location")
+
+                if location is not None:
+                    if not isinstance(location, str):
+                        raise ValueError("Invalid Location header")
+                    if (
+                        not 1 <= len(location) <= 512
+                        or not location.startswith("/")
+                        or location.startswith("//")
+                        or not location.isascii()
+                        or any(
+                            c not in
+                            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                            "abcdefghijklmnopqrstuvwxyz"
+                            "0123456789/_~-."
+                            for c in location
+                        )
+                    ):
+                        raise ValueError("Unsafe Location header")
+
                 payload = body.encode("utf-8")
 
             except (sqlite3.Error, ValueError, TypeError,
@@ -71,12 +98,15 @@ def make_handler(database_path):
                 self.log_error("SQL dispatch failure: %s", error)
                 status = 500
                 allow = None
+                location = None
                 content_type = "text/plain; charset=utf-8"
                 payload = b"500: Igor has encountered a complication."
 
             self.send_response(status)
             if allow is not None:
                 self.send_header("Allow", allow)
+            if location is not None:
+                self.send_header("Location", location)
             if self.command == "POST":
                 self.close_connection = True
                 self.send_header("Connection", "close")
