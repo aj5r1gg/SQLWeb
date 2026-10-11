@@ -28,11 +28,21 @@ DISPATCH_SQL = (
 ).read_text(encoding="utf-8")
 
 
+MIDDLEWARE_SCHEMA_SQL = (
+    ROOT / "sql" / "middleware_schema.sql"
+).read_text(encoding="utf-8")
+
+MIDDLEWARE_DISPATCH_SQL = (
+    ROOT / "sql" / "middleware_dispatch.sql"
+).read_text(encoding="utf-8")
+
+
 def initialize_database(database_path):
     """Create the database and seed default routes."""
 
     with sqlite3.connect(database_path) as connection:
         connection.executescript(SCHEMA_SQL)
+        connection.executescript(MIDDLEWARE_SCHEMA_SQL)
 
 
 def make_handler(database_path):
@@ -55,13 +65,39 @@ def make_handler(database_path):
                     timeout=5.0,
                 ) as connection:
 
-                    result = connection.execute(
-                        DISPATCH_SQL,
+                    decision = connection.execute(
+                        MIDDLEWARE_DISPATCH_SQL,
                         {
                             "method": "GET",
                             "path": path,
                         },
                     ).fetchone()
+
+                    if decision is None:
+                        raise RuntimeError(
+                            "Middleware returned no decision"
+                        )
+
+                    action, mw_status, mw_type, mw_body = decision
+
+                    if action == "DENY":
+                        result = (
+                            mw_status,
+                            mw_type,
+                            mw_body,
+                        )
+                    elif action == "ALLOW":
+                        result = connection.execute(
+                            DISPATCH_SQL,
+                            {
+                                "method": "GET",
+                                "path": path,
+                            },
+                        ).fetchone()
+                    else:
+                        raise RuntimeError(
+                            "Unsupported middleware action"
+                        )
 
                 if result is None:
                     raise RuntimeError(
