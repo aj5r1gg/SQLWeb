@@ -22,34 +22,61 @@ REQUEST_PIPELINE_V2_SQL = (
 ).read_text(encoding="utf-8")
 
 
-def select_request_pipeline(db):
-    """Choose the SQL pipeline from the middleware schema format."""
-    columns = [
-        row[1]
-        for row in db.execute(
-            "PRAGMA table_info(middleware_rules)"
+def middleware_fingerprint(db):
+    """Fingerprint the application's middleware table and index."""
+    return db.execute(
+        """
+        SELECT type, name, tbl_name, sql
+        FROM sqlite_schema
+        WHERE name IN (
+            'middleware_rules',
+            'middleware_rules_lookup'
         )
-    ]
+        ORDER BY type, name
+        """
+    ).fetchall()
 
-    legacy = [
-        "rule_id",
-        "priority",
-        "enabled",
-        "method",
-        "path",
-        "action",
-        "status",
-        "content_type",
-        "body",
-    ]
 
-    if columns == legacy:
+def expected_middleware_fingerprints():
+    """Construct canonical fingerprints from shipped SQL."""
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.executescript(MIDDLEWARE)
+        legacy = middleware_fingerprint(db)
+
+        migration = (
+            ROOT / "sql/middleware_migrate_v2_candidate.sql"
+        ).read_text(encoding="utf-8")
+
+        db.executescript(migration)
+        upgraded = middleware_fingerprint(db)
+
+    if len(legacy) != 2 or len(upgraded) != 2:
+        raise ValueError("Invalid canonical middleware schemas")
+
+    if legacy == upgraded:
+        raise ValueError("Middleware versions are indistinguishable")
+
+    return legacy, upgraded
+
+
+LEGACY_FINGERPRINT, V2_FINGERPRINT = (
+    expected_middleware_fingerprints()
+)
+
+
+def select_request_pipeline(db):
+    """Select the SQL pipeline from a verified schema definition."""
+    actual = middleware_fingerprint(db)
+
+    if actual == LEGACY_FINGERPRINT:
         return REQUEST_PIPELINE_SQL
 
-    if columns == legacy + ["destination"]:
+    if actual == V2_FINGERPRINT:
         return REQUEST_PIPELINE_V2_SQL
 
     raise ValueError("Unsupported middleware schema")
+
+
 
 def initialize_database(path):
     with closing(sqlite3.connect(path)) as db:
