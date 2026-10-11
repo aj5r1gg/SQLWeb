@@ -4,19 +4,21 @@
 
 *Because writing a web server in Assembly was far too sensible.*
 
-SQLWeb is an experimental SQL-powered HTTP server. It uses SQLite to select HTTP routes, response status codes, content types and response bodies, while a small Python standard-library adapter handles the network transport.
+SQLWeb is an experimental, SQL-first HTTP server in which SQLite makes application decisions and a small Python standard-library adapter handles HTTP transport.
 
-Yes, it actually works.
+It really works.
 
-No, that does not make it a sensible engineering decision.
+Whether it should exist is a separate question.
+
+**Current status:** v0.1.0 is the public release. The `develop` branch contains substantial additional functionality under qualification.
+
+> **Experimental software. Not production-ready. Do not expose it directly to the public internet.**
 
 ## The Engineering Team
 
 **The Mad Tech Head** — Chief Architect, Supreme Instigator of Questionable Engineering Decisions, and the man who looked at SQL and thought, "That could be a web server."
 
 **Igor** — Faithful Assistant, Reluctant Voice of Reason, Keeper of the Unit Tests, and Accomplice in Crimes Against Software Architecture.
-
-### How It Started
 
 **Mad Tech Head:** "Igor! Can we build a web server using SQL?"
 
@@ -28,160 +30,270 @@ No, that does not make it a sensible engineering decision.
 
 **Mad Tech Head:** "Obviously. We're not animals."
 
-## Official Disclaimer
+## What SQLWeb Actually Does
 
-**WARNING: This project is not a parody implementation. It actually works. The parody is that we thought building it was a good idea.**
+SQLWeb uses SQLite as the application decision engine.
 
-SQLWeb is a functioning experimental implementation, not a production-ready HTTP server. Its implementation is real; its architectural judgement remains under investigation.
+SQLite determines which configured route matches a request, which middleware rule takes precedence, whether a request is permitted, and which response data should be returned.
 
-**Just because you shouldn't doesn't mean we won't.**
+Python handles TCP connections, HTTP parsing, SQLite connectivity, response validation, HTTP framing and network I/O.
 
-## Features
+The project does not pretend that SQL opens network sockets or implements the TCP/IP stack.
 
-- Functioning local HTTP listener.
-- SQLite-backed route definitions.
-- Parameterised SQL request dispatch.
-- SQL-selected HTTP status codes, content types and response bodies.
-- Persistent route database.
-- Dynamic route additions without restarting the HTTP server.
-- SQL-generated HTTP 404 responses.
-- HTTP 405 responses for unsupported HEAD and POST methods.
-- Eight HTTP integration regression tests.
-- GitHub Actions continuous integration workflow.
+### Working default-pipeline features on develop
+
+- Local HTTP server using Python's standard library.
+- SQLite-backed route definitions and persistent storage.
+- SQL-selected HTTP status, content type and response body.
+- Dynamic route changes without restarting the server.
+- Parameterised SQL request processing.
+- SQL-defined ALLOW and DENY middleware.
+- Deterministic middleware precedence by priority and rule ID.
+- SQL-defined HTTP 405 decisions for unsupported methods.
+- SQL-selected Allow response headers.
+- SQL-generated 404 fallback responses.
+- Response validation and fail-closed HTTP 500 handling.
+- Protection against malformed SQL-controlled headers.
+- Automated routing, middleware, transport and security tests.
+- GitHub Actions test workflow.
 - No third-party Python runtime dependencies.
+
+### Qualified development candidates
+
+The `develop` branch additionally contains SQL-defined REDIRECT and REWRITE implementations.
+
+**REDIRECT** supports candidate response codes 301, 302, 307 and 308. SQLite selects the status and destination, while Python validates and transmits the Location header.
+
+**REWRITE** changes the internal route lookup path. The browser URL remains unchanged, middleware is evaluated only once, and rewrite chains are not followed.
+
+Missing rewritten routes return HTTP 404.
+
+The candidate implementation has passed SQL-level and real HTTP integration tests, but it is not yet the default production request pipeline.
+
+A middleware v2 schema migration candidate and an explicit upgrade utility are also under development. The upgrade utility has not completed its qualification programme and must not be applied to an existing database without the qualified upgrade procedure and a verified backup.
 
 ## Requirements
 
-Python 3.10 or newer, with SQLite support through the standard library.
+- Python 3.10 or newer with standard-library SQLite support.
+- A supported operating system with local TCP networking.
+- Git to clone the repository.
+- An optional SQLite command-line client for manual database inspection.
 
-No pip installation is required.
+No pip installation is required for the HTTP server or regression tests.
 
 A questionable sense of humour is recommended.
 
 ## Quick Start
 
-Clone the repository:
+Clone the public repository:
 
-`git clone https://github.com/aj5r1gg/SQLWeb.git`
+    git clone https://github.com/aj5r1gg/SQLWeb.git
+    cd SQLWeb
 
-`cd SQLWeb`
+Start the server:
 
-Start SQLWeb:
+    python3 server.py
 
-`python3 server.py`
+By default, SQLWeb listens on 127.0.0.1, port 8080.
 
-By default, SQLWeb listens at `http://127.0.0.1:8080`.
+In another terminal, try:
 
-Try the following requests in another terminal:
+    curl -i http://127.0.0.1:8080/
+    curl -i http://127.0.0.1:8080/health
+    curl -i http://127.0.0.1:8080/igor
+    curl -i http://127.0.0.1:8080/forbidden
+    curl -i http://127.0.0.1:8080/missing
 
-- `curl -i http://127.0.0.1:8080/`
-- `curl -i http://127.0.0.1:8080/health`
-- `curl -i http://127.0.0.1:8080/igor`
-- `curl -i http://127.0.0.1:8080/missing`
+Stop the server with Ctrl+C.
 
-Stop the server using Ctrl+C.
+### Running the development branch
 
-### Default Endpoints
+To inspect the more advanced SQL middleware implementation:
 
-| Method | Path | Result |
+    git switch develop
+
+If you cloned the repository before the development branch existed, fetch it first:
+
+    git fetch origin
+    git switch --track origin/develop
+
+The normal development server still uses the committed default SQL pipeline, not the experimental REDIRECT/REWRITE candidate.
+
+### Default endpoints
+
+| Method | Path | Response |
 |---|---|---|
-| GET | `/` | HTTP 200 — SQLWeb introduction |
-| GET | `/health` | HTTP 200 — JSON response |
-| GET | `/igor` | HTTP 200 — Igor acknowledges the Master |
-| GET | Unknown path | HTTP 404 |
-| POST | Any path | HTTP 405 |
-| HEAD | Any path | HTTP 405 |
+| GET | `/` | 200, SQLWeb introduction |
+| GET | `/health` | 200, JSON health response |
+| GET | `/igor` | 200, Igor acknowledges the Master |
+| GET | `/forbidden` | 403, SQL middleware denial on develop |
+| GET | Unknown path | 404, SQL-selected fallback |
+| POST | Any path | 405, with Allow: GET |
+| HEAD | Any path | 405, with Allow: GET and no body |
 
-The `/igor` endpoint returns:
-
-**Yes, Master. Unfortunately, it works.**
+The initial public v0.1.0 release predates the SQL middleware implementation. The `/forbidden` endpoint and newer response-policy behaviour described here belong to `develop`.
 
 ## Architecture
 
-SQLWeb's request flow is:
+The current development request flow is:
 
-**HTTP client → Python HTTP adapter → SQLite → SQL dispatcher → Routes table → Python HTTP adapter → HTTP client**
+1. Python receives and parses an HTTP request.
+2. Python binds the HTTP method and URL path as SQL parameters.
+3. SQLite selects the highest-precedence matching middleware rule.
+4. SQLite determines the response policy and route selection.
+5. SQLite returns a seven-column response record.
+6. Python validates the response and emits HTTP headers and body.
 
-Python handles TCP connections, HTTP parsing, response framing and network I/O.
+The seven response fields are:
 
-SQLite handles route matching, status selection, content-type selection and response-body selection.
+| Field | Purpose |
+|---|---|
+| `action` | SQL-selected middleware decision |
+| `status` | HTTP response status |
+| `content_type` | Response media type |
+| `body` | Response body text |
+| `location` | Optional redirect destination |
+| `effective_path` | SQL-selected internal route path |
+| `allow_methods` | Optional HTTP Allow header |
 
-The primary implementation files are:
+Python validates response values before transmitting them. It is not responsible for interpreting middleware priority or performing internal route rewrites.
 
-- `server.py` — HTTP transport and database integration.
-- `sql/schema.sql` — SQLite route schema and default routes.
-- `sql/dispatch.sql` — SQL-powered request dispatcher.
-- `tests/test_sqlweb.py` — HTTP integration regression tests.
+### Important implementation files
 
-### Technical Honesty
+| File | Responsibility |
+|---|---|
+| `server.py` | HTTP transport and response safety |
+| `sql/schema.sql` | Route schema and default routes |
+| `sql/middleware_schema.sql` | Default ALLOW/DENY middleware schema |
+| `sql/request_pipeline.sql` | Active SQL decision pipeline on develop |
+| `sql/request_pipeline_v2_candidate.sql` | Experimental REDIRECT/REWRITE pipeline |
+| `sql/middleware_migrate_v2_candidate.sql` | Experimental middleware schema upgrade |
+| `tests/` | Permanent HTTP and security regression tests |
 
-SQLWeb v0.1 is an **SQL-powered HTTP server**, not a pure-SQL TCP/IP implementation.
+The older `sql/dispatch.sql` and `sql/middleware_dispatch.sql` files remain in the repository, but the development server uses the consolidated request pipeline.
 
-SQL does not directly open sockets or implement network protocols in this release.
+### Middleware precedence
 
-Even Igor has standards.
+Enabled rules are evaluated by ascending numerical priority and then ascending rule ID.
+
+Only the first matching rule decides the middleware action.
+
+No matching rule means ALLOW.
+
+An explicit ALLOW continues to normal route lookup; it does not invent a missing route.
+
+An explicit DENY returns the middleware-selected response.
 
 ## Adding a Route
 
-Start SQLWeb once to initialise `sqlweb.db`.
+Start the server once so it creates `sqlweb.db`.
 
-You can then insert routes through SQLite. For example, using the SQLite command-line client:
+Open the database using the optional SQLite command-line client:
 
-`sqlite3 sqlweb.db`
+    sqlite3 sqlweb.db
 
-Execute the following SQL:
+Execute:
 
-`INSERT INTO routes (method, path, status, content_type, body) VALUES ('GET', '/hello', 200, 'text/plain; charset=utf-8', 'Hello from SQLWeb!');`
+    INSERT INTO routes
+        (method, path, status, content_type, body)
+    VALUES
+        ('GET', '/hello', 200,
+         'text/plain; charset=utf-8',
+         'Hello from SQLWeb!');
 
-Exit SQLite with `.quit`.
+Exit SQLite:
+
+    .quit
 
 Request the new endpoint:
 
-`curl -i http://127.0.0.1:8080/hello`
+    curl -i http://127.0.0.1:8080/hello
 
-The server reads committed route changes from SQLite when requests arrive, so a restart is not required.
+SQLWeb reads committed route data during subsequent requests. A restart is not required.
 
-## Automated Testing
+For the development middleware engine, rules may likewise be changed in the database subject to its schema constraints and priority ordering.
 
-Run:
+## Testing and Qualification
 
-`python3 -m unittest discover -s tests -v`
+Run the full local regression suite:
 
-The permanent regression suite covers the homepage, JSON health response, Igor endpoint, unknown routes, query strings, dynamic routes, POST rejection and HEAD rejection.
+    python3 -m unittest discover -s tests -v
 
-Tests use an isolated temporary database and a real local HTTP listener.
+At development checkpoint M3-L.1, the complete suite passed **42 out of 42 tests**.
 
-The GitHub Actions workflow runs these tests on pushes and pull requests. A successful local test run does not establish that remote CI has passed.
+The permanent suite covers:
 
-## Security
+- Default routes and dynamic route insertion.
+- SQL middleware ALLOW and DENY behaviour.
+- Priority and rule-ID tie-breaking.
+- Parameter binding and injection resistance.
+- Unsupported HTTP methods.
+- Missing database objects and HTTP 500 fallback.
+- Invalid SQL response statuses and headers.
+- SQL-controlled Location header safety.
+- Four candidate redirect status codes.
+- Internal rewrite behaviour, missing routes and loop prevention.
+- Real HTTP responses using temporary SQLite databases.
 
-SQLWeb v0.1 is strictly an experimental development server. It binds to `127.0.0.1` by default.
+Some tests deliberately generate HTTP 500 responses to establish fail-closed behaviour.
 
-It does not provide TLS termination, authentication, authorisation, rate limiting, comprehensive resource limits, or production-grade HTTP hardening.
+The REDIRECT/REWRITE regression tests currently load the candidate SQL pipeline rather than the default installed pipeline. Passing them does not imply those transforms are enabled in normal server execution.
 
-**Do not expose SQLWeb v0.1 directly to the public internet.**
+Local tests and remote GitHub Actions are distinct qualifications. Do not assume CI has passed without checking its results.
 
-Publishing the source repository publicly is fine. Running the experimental server as a publicly accessible service is not recommended.
+## Security and Limitations
 
-## Roadmap Nobody Requested
+SQLWeb is an experimental engineering project, not a hardened internet-facing web server.
 
-- [x] Build a working HTTP server.
-- [x] Implement SQLite-backed routing.
-- [x] Generate HTTP responses selected by SQL.
-- [x] Add dynamically modifiable routes.
-- [x] Introduce Igor.
-- [x] Add permanent HTTP integration tests.
-- [x] Configure GitHub Actions.
-- [ ] SQL-defined middleware.
-- [ ] SQL-generated custom error pages.
-- [ ] SQL-defined response headers.
-- [ ] SQL-based request logging.
-- [ ] HTTP profiling using `EXPLAIN QUERY PLAN`.
-- [ ] Comparative benchmarks against conventional HTTP servers.
-- [ ] SQL-based template rendering.
-- [ ] Discover how much more ridiculous this can become.
+The default listener binds to localhost.
 
-**Rejected feature:** An ORM to avoid writing SQL. Igor considers this philosophically indefensible.
+The current project does not provide production-grade:
+
+- TLS termination.
+- Authentication and access-control management.
+- Rate limiting and abuse prevention.
+- Comprehensive request-size and resource limits.
+- HTTP/2 or HTTP/3.
+- Exhaustive HTTP protocol conformance.
+- Security-reviewed deployment and operational hardening.
+
+Middleware ALLOW/DENY rules are not a substitute for a complete authentication and authorisation system.
+
+The response adapter checks SQL-selected headers and values, but this does not establish comprehensive security.
+
+**Do not deploy SQLWeb directly onto a publicly accessible interface.**
+
+## Development Status and Roadmap
+
+| Capability | Status |
+|---|---|
+| Local HTTP server | Implemented |
+| SQLite route dispatch | Implemented |
+| SQL-generated response decisions | Implemented |
+| Dynamic routes | Implemented |
+| SQL ALLOW/DENY middleware | Implemented on develop |
+| Deterministic middleware priority | Implemented on develop |
+| SQL-defined method policy and Allow header | Implemented on develop |
+| Unified SQL request pipeline | Implemented on develop |
+| Redirect/rewrite SQL pipeline | Candidate qualified |
+| Redirect/rewrite HTTP integration | Candidate qualified |
+| Middleware v2 schema migration | Candidate qualified in selected scenarios |
+| Explicit migration upgrade utility | Further qualification required |
+| Default-pipeline transform integration | Pending |
+| Database migration deployment procedure | Pending |
+| SQL-defined request logging | Planned |
+| SQL-based performance profiling | Planned |
+| Comparative server benchmarking | Planned |
+| SQL-based template rendering | Exploratory |
+
+No comparative performance claim against Nginx, Apache, Caddy or another server is made.
+
+### Branches
+
+- `main` — public v0.1.0 baseline.
+- `develop` — ongoing engineering and qualification.
+
+The development branch must not be treated as a production release.
 
 ## Frequently Asked Questions
 
@@ -193,6 +305,10 @@ No.
 
 Yes.
 
+**Is it a pure-SQL web server?**
+
+No. SQLite provides the application decision engine; Python provides HTTP transport.
+
 **Why SQL?**
 
 Because Assembly was already taken.
@@ -201,46 +317,48 @@ Because Assembly was already taken.
 
 Absolutely not.
 
-**Is this a joke?**
+**Is it a joke?**
 
-The engineering decision is a joke. The implementation is real.
+The architectural decision is a joke. The implementation and tests are real.
+
+**Will it outperform Nginx?**
+
+No such claim has been made or demonstrated.
+
+**Can I contribute?**
+
+Yes. Bug reports should include reproduction steps, and pull requests should include relevant tests.
 
 **Who is responsible?**
 
 The Mad Tech Head. Igor wishes to clarify that he was following instructions.
 
-**Will SQLWeb outperform Nginx?**
-
-No such claim has been made. No comparative benchmark has been performed.
-
-**Can I contribute?**
-
-Certainly. Pull requests should include tests, bug reports should contain reproducible steps, and architectural proposals should preferably involve SQL in some entirely unnecessary capacity.
-
-**Will there be a version 0.2?**
-
-Regrettably, probably.
-
 ## Development Philosophy
 
 1. The implementation must actually work.
 2. Tests must verify meaningful behaviour.
-3. Technical claims must be accurate.
-4. Deliberately absurd architecture is encouraged.
-5. Deliberately broken software is not.
-6. Security limitations must be documented.
-7. Benchmark results must never be invented.
-8. Igor is permitted to object.
-9. The Mad Tech Head is permitted to ignore Igor.
-10. Both remain responsible for the consequences.
+3. No invented benchmarks, results or capabilities.
+4. SQL should own application decisions wherever practical.
+5. Python must retain necessary transport safety.
+6. Database migrations must preserve existing data.
+7. Failures should be deterministic and recoverable.
+8. Deliberately absurd architecture is encouraged.
+9. Deliberately broken software is not.
+10. Igor is permitted to object.
+
+The Mad Tech Head is permitted to ignore Igor.
+
+Both remain responsible for the consequences.
+
+**Rejected feature:** An ORM to avoid writing SQL. Igor considers this philosophically indefensible.
 
 ## Credits
 
 **Developed by The Mad Tech Head and his faithful assistant Igor.**
 
-The Mad Tech Head provides the dangerously creative ideas.
+The Mad Tech Head supplies the dangerously creative ideas.
 
-Igor provides the implementation, tests, documentation, objections and occasional expressions of genuine concern.
+Igor supplies implementation assistance, tests, documentation, objections and occasional expressions of genuine concern.
 
 Together, they have produced something that works considerably better than it has any right to.
 
@@ -257,107 +375,3 @@ Released under the MIT License. See [LICENSE](LICENSE).
 **Igor:** "Master, I would like to formally record my objection."
 
 **Mad Tech Head:** "Objection noted. Implement version 0.2."
-
-## Development status — SQL middleware transforms
-
-SQLWeb is an experimental SQL-first HTTP server.
-
-The project deliberately places request routing, middleware
-selection, method policy, and response decisions in SQLite.
-
-Python provides HTTP transport and validates the
-database-selected responses.
-
-### Current development capabilities
-
-The `develop` branch includes:
-
-- SQLite-defined HTTP routes and response bodies.
-- Deterministic ALLOW and DENY middleware.
-- Middleware precedence by priority and rule ID.
-- SQL-defined HTTP method policy.
-- SQL-controlled Allow headers.
-- A unified SQL request pipeline.
-- REDIRECT and REWRITE candidate implementations.
-- HTTP 301, 302, 307, and 308 redirect qualification.
-- Single-hop internal rewrite qualification.
-- Root-relative destination validation.
-- Protection against malformed HTTP response headers.
-- Transactional middleware schema migration candidate.
-- Automated middleware, transport, and security tests.
-
-### REDIRECT and REWRITE
-
-The development candidates demonstrate two transformations.
-
-**REDIRECT**
-
-SQLite selects the HTTP status and Location destination.
-Python validates and transmits the resulting response.
-
-Supported candidate redirect statuses:
-
-- 301 Moved Permanently
-- 302 Found
-- 307 Temporary Redirect
-- 308 Permanent Redirect
-
-**REWRITE**
-
-SQLite selects a replacement internal route path.
-
-The original client URL remains unchanged.
-
-Middleware is evaluated only once per request.
-Rewrite chains are not followed.
-
-Missing rewritten routes return HTTP 404.
-
-These features have passed isolated SQL and HTTP tests.
-
-They are not yet enabled in the default request pipeline.
-
-### Database migrations
-
-The middleware v2 schema migration is under qualification.
-
-An explicit upgrade command is being developed, but has
-not yet completed its qualification programme.
-
-Do not apply experimental migrations directly to existing
-databases without a verified backup and qualified procedure.
-
-Automatic schema migration during server startup is not
-part of the current development design.
-
-### Engineering principles
-
-1. SQL owns application decisions.
-2. Python handles HTTP transport and response safety.
-3. SQL parameters are bound rather than interpolated.
-4. Unexpected database states must fail closed.
-5. Existing middleware records must survive upgrades.
-6. Security and regression testing precede integration.
-7. Experimental features remain separate from releases.
-
-### Development tests
-
-Run the complete regression suite using:
-
-    python3 -m unittest discover -s tests -v
-
-At the M3-J.10 development checkpoint, all 42 tests passed.
-
-The tests cover routing, middleware, transport, security,
-redirects, rewrites, and response validation.
-
-### Branches and releases
-
-- `main`: current public release baseline.
-- `develop`: ongoing development and qualification.
-- `v0.1.0`: initial public release.
-
-The development branch is not a production release.
-
-For implementation details, review the SQL source files
-and regression tests on the `develop` branch.
