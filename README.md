@@ -40,37 +40,47 @@ Python handles TCP connections, HTTP parsing, SQLite connectivity, response vali
 
 The project does not pretend that SQL opens network sockets or implements the TCP/IP stack.
 
-### Working default-pipeline features on develop
+### Implemented features in v0.2.0
 
 - Local HTTP server using Python's standard library.
 - SQLite-backed route definitions and persistent storage.
 - SQL-selected HTTP status, content type and response body.
 - Dynamic route changes without restarting the server.
 - Parameterised SQL request processing.
-- SQL-defined ALLOW and DENY middleware.
+- SQL-defined ALLOW, DENY, REDIRECT and REWRITE middleware.
 - Deterministic middleware precedence by priority and rule ID.
-- SQL-defined HTTP 405 decisions for unsupported methods.
-- SQL-selected Allow response headers.
-- SQL-generated 404 fallback responses.
+- SQL-defined HTTP 405 decisions and Allow headers.
+- SQL-generated HTTP 404 fallback responses.
+- Redirect responses with status 301, 302, 307 or 308.
+- Single-hop internal route rewriting without changing the browser URL.
+- Schema-aware selection of legacy v1 or v2 SQL dispatch.
+- Fresh databases initialized with middleware v2.
+- Explicit offline v1-to-v2 upgrade with verified SQLite backup.
+- Backup restoration and upgrade regression tests.
 - Response validation and fail-closed HTTP 500 handling.
-- Protection against malformed SQL-controlled headers.
+- Protection against malformed SQL-controlled response headers.
 - Automated routing, middleware, transport and security tests.
 - GitHub Actions test workflow.
 - No third-party Python runtime dependencies.
 
-### Qualified development candidates
+### Redirect and rewrite semantics
 
-The `develop` branch additionally contains SQL-defined REDIRECT and REWRITE implementations.
+**REDIRECT** causes SQLite to select an HTTP redirect status
+and destination. Python validates the Location header before
+transmitting it. Supported statuses are 301, 302, 307 and 308.
 
-**REDIRECT** supports candidate response codes 301, 302, 307 and 308. SQLite selects the status and destination, while Python validates and transmits the Location header.
+**REWRITE** changes the internal route lookup path while leaving
+the requested browser URL unchanged. Middleware is evaluated
+once. Rewrite chains are not followed, and a missing rewritten
+route returns HTTP 404.
 
-**REWRITE** changes the internal route lookup path. The browser URL remains unchanged, middleware is evaluated only once, and rewrite chains are not followed.
+These operations are available in the normal server when its
+database uses the v2 middleware schema.
 
-Missing rewritten routes return HTTP 404.
+Existing v1 databases retain legacy ALLOW/DENY behaviour until
+explicitly upgraded. No automatic migration occurs at startup.
 
-The candidate implementation has passed SQL-level and real HTTP integration tests, but it is not yet the default production request pipeline.
-
-A middleware v2 schema migration candidate and an explicit upgrade utility are also under development. The upgrade utility has not completed its qualification programme and must not be applied to an existing database without the qualified upgrade procedure and a verified backup.
+These features were qualified on `develop` before the v0.2.0 release.
 
 ## Requirements
 
@@ -106,18 +116,87 @@ In another terminal, try:
 
 Stop the server with Ctrl+C.
 
-### Running the development branch
+### Installing v0.2.0
 
-To inspect the more advanced SQL middleware implementation:
+For the published release, clone the repository and select
+the versioned release tag:
+
+    git clone https://github.com/aj5r1gg/SQLWeb.git
+    cd SQLWeb
+    git fetch --tags
+    git switch --detach v0.2.0
+    python3 server.py
+
+The v0.2.0 tag must exist on GitHub before these release
+instructions can be used.
+
+A fresh database uses middleware v2 automatically.
+REDIRECT and REWRITE are available through normal request
+dispatch.
+
+To work on ongoing development rather than a release:
 
     git switch develop
 
-If you cloned the repository before the development branch existed, fetch it first:
+Existing v1 databases are not automatically migrated.
+Follow the offline upgrade instructions below.
 
-    git fetch origin
-    git switch --track origin/develop
+### Upgrading an existing v1 database
 
-The normal development server still uses the committed default SQL pipeline, not the experimental REDIRECT/REWRITE candidate.
+**Stop SQLWeb and all other writers to the database before
+upgrading. Concurrent upgrades are not supported.**
+
+From the repository root, run:
+
+    python3 tools/upgrade_middleware.py \
+        --database sqlweb.db \
+        --backup sqlweb-before-v2.db \
+        --apply
+
+The upgrade utility requires explicit `--apply` authorisation
+and a new backup filename. It refuses to overwrite an existing
+backup file.
+
+The utility uses SQLite's backup API, checks backup integrity,
+validates the recognised legacy middleware schema, and
+performs the schema replacement transactionally.
+
+The database's existing routes and middleware records are
+preserved. Once upgraded, SQLWeb automatically selects the
+v2 SQL request pipeline.
+
+**Do not remove the backup after upgrading.** Confirm that
+the upgraded application behaves correctly before treating
+the upgrade as complete.
+
+If migration fails, inspect the error and database state before
+retrying. Do not bypass schema validation.
+
+### Recovering from an upgrade
+
+Keep SQLWeb and all database writers stopped.
+
+The backup contains the pre-upgrade database. Recovery should
+be performed to a separate database file first, rather than
+overwriting the existing database blindly.
+
+For example, with the optional SQLite CLI:
+
+    sqlite3 sqlweb-before-v2.db ".backup 'sqlweb-restored.db'"
+
+Verify the restored database:
+
+    sqlite3 sqlweb-restored.db "PRAGMA integrity_check;"
+
+Inspect its data and schema before deciding whether to replace
+the application database. Preserve the failed database for
+diagnosis.
+
+The recovery procedure was exercised against disposable
+databases during release-candidate qualification.
+
+SQLWeb does not automatically roll back an upgrade by restoring
+its backup.
 
 ### Default endpoints
 
@@ -131,11 +210,11 @@ The normal development server still uses the committed default SQL pipeline, not
 | POST | Any path | 405, with Allow: GET |
 | HEAD | Any path | 405, with Allow: GET and no body |
 
-The initial public v0.1.0 release predates the SQL middleware implementation. The `/forbidden` endpoint and newer response-policy behaviour described here belong to `develop`.
+Version 0.1.0 predates the expanded middleware implementation. The response-policy behaviour described here is included in v0.2.0.
 
 ## Architecture
 
-The current development request flow is:
+The current SQLWeb request flow is:
 
 1. Python receives and parses an HTTP request.
 2. Python binds the HTTP method and URL path as SQL parameters.
@@ -162,15 +241,25 @@ Python validates response values before transmitting them. It is not responsible
 
 | File | Responsibility |
 |---|---|
-| `server.py` | HTTP transport and response safety |
+| `server.py` | HTTP transport, initialization, schema selection and response safety |
 | `sql/schema.sql` | Route schema and default routes |
-| `sql/middleware_schema.sql` | Default ALLOW/DENY middleware schema |
-| `sql/request_pipeline.sql` | Active SQL decision pipeline on develop |
-| `sql/request_pipeline_v2_candidate.sql` | Experimental REDIRECT/REWRITE pipeline |
-| `sql/middleware_migrate_v2_candidate.sql` | Experimental middleware schema upgrade |
-| `tests/` | Permanent HTTP and security regression tests |
+| `sql/middleware_schema.sql` | Canonical legacy v1 middleware schema |
+| `sql/request_pipeline.sql` | Legacy v1 SQL request pipeline |
+| `sql/request_pipeline_v2.sql` | v2 SQL pipeline including REDIRECT and REWRITE |
+| `sql/middleware_upgrade_v2.sql` | Transactional v1-to-v2 schema definition and migration |
+| `tools/upgrade_middleware.py` | Guarded offline upgrade and verified backup |
+| `tests/` | Permanent HTTP, migration and security regression tests |
 
-The older `sql/dispatch.sql` and `sql/middleware_dispatch.sql` files remain in the repository, but the development server uses the consolidated request pipeline.
+The server selects the applicable SQL pipeline from the
+verified middleware table and index definitions.
+
+Fresh v2 databases are built using the legacy schema followed
+by the same qualified v2 migration SQL. Existing databases are
+not migrated automatically.
+
+Older dispatch and candidate SQL files are retained in the
+repository for development history. They are not selected by
+the normal v0.2.0 request handler.
 
 ### Middleware precedence
 
@@ -211,35 +300,43 @@ Request the new endpoint:
 
 SQLWeb reads committed route data during subsequent requests. A restart is not required.
 
-For the development middleware engine, rules may likewise be changed in the database subject to its schema constraints and priority ordering.
+Middleware rules can likewise be changed in the database subject to the active schema constraints and deterministic priority ordering.
 
 ## Testing and Qualification
 
-Run the full local regression suite:
+Run the complete regression suite:
 
     python3 -m unittest discover -s tests -v
 
-At development checkpoint M3-L.1, the complete suite passed **42 out of 42 tests**.
+At checkpoint M3-RC.4, the local suite passed **61 out of 61
+tests**. This is a recorded qualification result, not a claim
+about future changes or remote CI.
 
-The permanent suite covers:
+The suite covers:
 
 - Default routes and dynamic route insertion.
 - SQL middleware ALLOW and DENY behaviour.
-- Priority and rule-ID tie-breaking.
+- Deterministic middleware priority and rule-ID tie-breaking.
 - Parameter binding and injection resistance.
-- Unsupported HTTP methods.
-- Missing database objects and HTTP 500 fallback.
-- Invalid SQL response statuses and headers.
-- SQL-controlled Location header safety.
-- Four candidate redirect status codes.
-- Internal rewrite behaviour, missing routes and loop prevention.
-- Real HTTP responses using temporary SQLite databases.
+- HTTP method restrictions and Allow headers.
+- Invalid response statuses and unsafe headers.
+- Redirect statuses, Location validation and HTTP behaviour.
+- Internal rewrites, missing routes and single-hop semantics.
+- Legacy and v2 middleware schema identification.
+- Real HTTP integration without replacing the installed pipeline.
+- Fresh v2 initialization and preservation of existing v1 data.
+- Rejection of unsupported middleware schemas.
+- Guarded migration, data preservation and transaction rollback.
+- Verified SQLite backups, overwrite prevention and restoration.
 
-Some tests deliberately generate HTTP 500 responses to establish fail-closed behaviour.
+The offline migration and recovery procedure was additionally
+rehearsed using disposable databases and the real upgrade CLI.
 
-The REDIRECT/REWRITE regression tests currently load the candidate SQL pipeline rather than the default installed pipeline. Passing them does not imply those transforms are enabled in normal server execution.
+Some tests intentionally generate HTTP 500 responses to confirm
+fail-closed behaviour.
 
-Local tests and remote GitHub Actions are distinct qualifications. Do not assume CI has passed without checking its results.
+Local qualification and GitHub Actions qualification are
+separate. Remote CI must be checked for the release revision.
 
 ## Security and Limitations
 
@@ -265,35 +362,41 @@ The response adapter checks SQL-selected headers and values, but this does not e
 
 ## Development Status and Roadmap
 
-| Capability | Status |
+| Capability | v0.2.0 status |
 |---|---|
 | Local HTTP server | Implemented |
 | SQLite route dispatch | Implemented |
 | SQL-generated response decisions | Implemented |
 | Dynamic routes | Implemented |
-| SQL ALLOW/DENY middleware | Implemented on develop |
-| Deterministic middleware priority | Implemented on develop |
-| SQL-defined method policy and Allow header | Implemented on develop |
-| Unified SQL request pipeline | Implemented on develop |
-| Redirect/rewrite SQL pipeline | Candidate qualified |
-| Redirect/rewrite HTTP integration | Candidate qualified |
-| Middleware v2 schema migration | Candidate qualified in selected scenarios |
-| Explicit migration upgrade utility | Further qualification required |
-| Default-pipeline transform integration | Pending |
-| Database migration deployment procedure | Pending |
+| SQL ALLOW/DENY middleware | Implemented |
+| Deterministic middleware priority | Implemented |
+| SQL-defined method policy and Allow header | Implemented |
+| Unified SQL request pipelines | Implemented |
+| Redirect and rewrite SQL pipeline | Integrated |
+| Redirect and rewrite HTTP integration | Qualified locally |
+| Fresh v2 database initialization | Implemented |
+| Existing v1 database compatibility | Implemented |
+| Explicit middleware upgrade utility | Qualified offline |
+| Verified SQLite backup and recovery | Qualified offline |
 | SQL-defined request logging | Planned |
 | SQL-based performance profiling | Planned |
 | Comparative server benchmarking | Planned |
 | SQL-based template rendering | Exploratory |
 
-No comparative performance claim against Nginx, Apache, Caddy or another server is made.
+No comparative performance claim against Nginx, Apache,
+Caddy or another web server is made.
 
-### Branches
+### Branches and releases
 
-- `main` — public v0.1.0 baseline.
-- `develop` — ongoing engineering and qualification.
+- `main` — stable release branch.
+- `develop` — ongoing development and qualification.
+- `v0.2.0` — versioned release tag, once published.
 
-The development branch must not be treated as a production release.
+A release is available only after its tag has been pushed
+and verified on GitHub.
+
+SQLWeb remains experimental software and is not intended
+for direct deployment to an untrusted public network.
 
 ## Frequently Asked Questions
 
