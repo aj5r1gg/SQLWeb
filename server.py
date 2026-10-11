@@ -1,208 +1,117 @@
-"""
-SQLWeb — The Web Server Nobody Asked For.
-
-Developed by The Mad Tech Head and his faithful assistant Igor.
-
-Python handles HTTP transport.
-SQLite handles response selection.
-
-The engineering justification remains unresolved.
-"""
+"""SQLWeb: SQL decides; Python transports."""
 
 import argparse
 import sqlite3
-
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
-
 ROOT = Path(__file__).resolve().parent
+ROUTES = (ROOT / "sql/schema.sql").read_text(encoding="utf-8")
+MIDDLEWARE = (ROOT / "sql/middleware_schema.sql").read_text(
+    encoding="utf-8"
+)
+REQUEST_PIPELINE_SQL = (ROOT / "sql/request_pipeline.sql").read_text(
+    encoding="utf-8"
+)
 
-SCHEMA_SQL = (
-    ROOT / "sql" / "schema.sql"
-).read_text(encoding="utf-8")
 
-MIDDLEWARE_SCHEMA_SQL = (
-    ROOT / "sql" / "middleware_schema.sql"
-).read_text(encoding="utf-8")
-
-
-REQUEST_PIPELINE_SQL = (
-    ROOT / "sql" / "request_pipeline.sql"
-).read_text(encoding="utf-8")
-
-def initialize_database(database_path):
-    """Create the database and seed default routes."""
-
-    with sqlite3.connect(database_path) as connection:
-        connection.executescript(SCHEMA_SQL)
-        connection.executescript(MIDDLEWARE_SCHEMA_SQL)
+def initialize_database(path):
+    with closing(sqlite3.connect(path)) as db:
+        db.executescript(ROUTES)
+        db.executescript(MIDDLEWARE)
 
 
 def make_handler(database_path):
-    """Create an HTTP handler using SQL for response selection."""
-
     database_path = Path(database_path).resolve()
 
-    class SQLWebHandler(BaseHTTPRequestHandler):
-
+    class Handler(BaseHTTPRequestHandler):
         server_version = "SQLWeb/0.2"
 
         def do_GET(self):
-            """Process an HTTP GET request through SQLite."""
-
-            path = urlsplit(self.path).path
-
             try:
-                with sqlite3.connect(
-                    database_path,
-                    timeout=5.0,
-                ) as connection:
-
-                    pipeline_row = connection.execute(
+                with closing(sqlite3.connect(
+                    database_path, timeout=5.0
+                )) as db:
+                    response = db.execute(
                         REQUEST_PIPELINE_SQL,
                         {
-                            "method": "GET",
-                            "path": path,
+                            "method": self.command,
+                            "path": urlsplit(self.path).path,
                         },
                     ).fetchone()
 
-                    if pipeline_row is None:
-                        raise RuntimeError(
-                            "SQL pipeline returned no response"
-                        )
+                if response is None or len(response) != 6:
+                    raise ValueError("Invalid SQL response")
 
-                    (
-                        action,
-                        status,
-                        content_type,
-                        body,
-                        location,
-                        effective_path,
-                    ) = pipeline_row
+                _, status, content_type, body, _, _ = response
 
-                    if action not in ("ALLOW", "DENY"):
-                        raise RuntimeError(
-                            "Unsupported pipeline action"
-                        )
-
-                    result = (
-                        status,
-                        content_type,
-                        body,
-                    )
-
-                if result is None:
-                    raise RuntimeError(
-                        "SQL dispatcher returned no response"
-                    )
-
-                status, content_type, body = result
+                if type(status) is not int or not 200 <= status <= 599:
+                    raise ValueError("Invalid HTTP status")
+                if not isinstance(content_type, str):
+                    raise ValueError("Invalid content type")
+                if not content_type or any(
+                    c in content_type for c in "\r\n\0"
+                ):
+                    raise ValueError("Unsafe content type")
+                if not isinstance(body, str):
+                    raise ValueError("Invalid response body")
 
                 payload = body.encode("utf-8")
 
-            except (
-                sqlite3.Error,
-                RuntimeError,
-                UnicodeError,
-            ) as error:
-
-                self.log_error(
-                    "SQL dispatch failure: %s",
-                    error,
-                )
-
+            except (sqlite3.Error, ValueError, TypeError,
+                    UnicodeError) as error:
+                self.log_error("SQL dispatch failure: %s", error)
                 status = 500
                 content_type = "text/plain; charset=utf-8"
                 payload = b"500: Igor has encountered a complication."
 
             self.send_response(status)
-
+            if status == 405:
+                self.send_header("Allow", "GET")
+            if self.command == "POST":
+                self.close_connection = True
+                self.send_header("Connection", "close")
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
             self.send_header(
-                "Content-Type",
-                content_type,
+                "X-Powered-By", "Questionable Engineering Decisions"
             )
-
-            self.send_header(
-                "Content-Length",
-                str(len(payload)),
-            )
-
-            self.send_header(
-                "X-Powered-By",
-                "Questionable Engineering Decisions",
-            )
-
             self.end_headers()
 
-            self.wfile.write(payload)
+            if self.command != "HEAD":
+                self.wfile.write(payload)
 
-        def do_HEAD(self):
-            """Reject unsupported HEAD requests."""
+        do_HEAD = do_GET
+        do_POST = do_GET
 
-            self.send_response(405)
-            self.send_header("Allow", "GET")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-
-        def do_POST(self):
-            """Reject unsupported POST requests."""
-
-            self.send_response(405)
-            self.send_header("Allow", "GET")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-
-    return SQLWebHandler
+    return Handler
 
 
 def main():
-    """Start the SQL-powered HTTP server."""
-
     parser = argparse.ArgumentParser(
         description="SQLWeb — A Questionable Achievement"
     )
-
-    parser.add_argument(
-        "--host",
-        default="127.0.0.1",
-    )
-
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=8080,
-    )
-
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
 
-    database_path = ROOT / "sqlweb.db"
+    database = ROOT / "sqlweb.db"
+    initialize_database(database)
 
-    initialize_database(database_path)
-
-    server = ThreadingHTTPServer(
-        (args.host, args.port),
-        make_handler(database_path),
-    )
-
-    print(
-        f"SQLWeb listening at "
-        f"http://{args.host}:{server.server_port}",
-        flush=True,
-    )
-
-    try:
-        server.serve_forever()
-
-    except KeyboardInterrupt:
+    with ThreadingHTTPServer(
+        (args.host, args.port), make_handler(database)
+    ) as server:
         print(
-            "\nIgor: Shutting down, Master.",
+            f"SQLWeb listening at "
+            f"http://{args.host}:{server.server_port}",
             flush=True,
         )
-
-    finally:
-        server.server_close()
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            print("\nIgor: Shutting down, Master.", flush=True)
 
 
 if __name__ == "__main__":

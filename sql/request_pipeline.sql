@@ -61,9 +61,13 @@ selected_route AS MATERIALIZED (
 )
 
 SELECT
-    d.action AS action,
+    CASE
+        WHEN :method <> 'GET' THEN 'DENY'
+        ELSE d.action
+    END AS action,
 
     CASE
+        WHEN :method <> 'GET' THEN 405
         WHEN d.action = 'DENY'
         THEN (SELECT status FROM selected_middleware)
         ELSE COALESCE(
@@ -73,6 +77,8 @@ SELECT
     END AS status,
 
     CASE
+        WHEN :method <> 'GET'
+        THEN 'text/plain; charset=utf-8'
         WHEN d.action = 'DENY'
         THEN (SELECT content_type FROM selected_middleware)
         ELSE COALESCE(
@@ -82,6 +88,7 @@ SELECT
     END AS content_type,
 
     CASE
+        WHEN :method <> 'GET' THEN ''
         WHEN d.action = 'DENY'
         THEN (SELECT body FROM selected_middleware)
         ELSE COALESCE(
