@@ -257,3 +257,107 @@ Released under the MIT License. See [LICENSE](LICENSE).
 **Igor:** "Master, I would like to formally record my objection."
 
 **Mad Tech Head:** "Objection noted. Implement version 0.2."
+
+## Development status — SQL middleware transforms
+
+SQLWeb is an experimental SQL-first HTTP server.
+
+The project deliberately places request routing, middleware
+selection, method policy, and response decisions in SQLite.
+
+Python provides HTTP transport and validates the
+database-selected responses.
+
+### Current development capabilities
+
+The `develop` branch includes:
+
+- SQLite-defined HTTP routes and response bodies.
+- Deterministic ALLOW and DENY middleware.
+- Middleware precedence by priority and rule ID.
+- SQL-defined HTTP method policy.
+- SQL-controlled Allow headers.
+- A unified SQL request pipeline.
+- REDIRECT and REWRITE candidate implementations.
+- HTTP 301, 302, 307, and 308 redirect qualification.
+- Single-hop internal rewrite qualification.
+- Root-relative destination validation.
+- Protection against malformed HTTP response headers.
+- Transactional middleware schema migration candidate.
+- Automated middleware, transport, and security tests.
+
+### REDIRECT and REWRITE
+
+The development candidates demonstrate two transformations.
+
+**REDIRECT**
+
+SQLite selects the HTTP status and Location destination.
+Python validates and transmits the resulting response.
+
+Supported candidate redirect statuses:
+
+- 301 Moved Permanently
+- 302 Found
+- 307 Temporary Redirect
+- 308 Permanent Redirect
+
+**REWRITE**
+
+SQLite selects a replacement internal route path.
+
+The original client URL remains unchanged.
+
+Middleware is evaluated only once per request.
+Rewrite chains are not followed.
+
+Missing rewritten routes return HTTP 404.
+
+These features have passed isolated SQL and HTTP tests.
+
+They are not yet enabled in the default request pipeline.
+
+### Database migrations
+
+The middleware v2 schema migration is under qualification.
+
+An explicit upgrade command is being developed, but has
+not yet completed its qualification programme.
+
+Do not apply experimental migrations directly to existing
+databases without a verified backup and qualified procedure.
+
+Automatic schema migration during server startup is not
+part of the current development design.
+
+### Engineering principles
+
+1. SQL owns application decisions.
+2. Python handles HTTP transport and response safety.
+3. SQL parameters are bound rather than interpolated.
+4. Unexpected database states must fail closed.
+5. Existing middleware records must survive upgrades.
+6. Security and regression testing precede integration.
+7. Experimental features remain separate from releases.
+
+### Development tests
+
+Run the complete regression suite using:
+
+    python3 -m unittest discover -s tests -v
+
+At the M3-J.10 development checkpoint, all 42 tests passed.
+
+The tests cover routing, middleware, transport, security,
+redirects, rewrites, and response validation.
+
+### Branches and releases
+
+- `main`: current public release baseline.
+- `develop`: ongoing development and qualification.
+- `v0.1.0`: initial public release.
+
+The development branch is not a production release.
+
+For implementation details, review the SQL source files
+and regression tests on the `develop` branch.
