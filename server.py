@@ -23,19 +23,14 @@ SCHEMA_SQL = (
     ROOT / "sql" / "schema.sql"
 ).read_text(encoding="utf-8")
 
-DISPATCH_SQL = (
-    ROOT / "sql" / "dispatch.sql"
-).read_text(encoding="utf-8")
-
-
 MIDDLEWARE_SCHEMA_SQL = (
     ROOT / "sql" / "middleware_schema.sql"
 ).read_text(encoding="utf-8")
 
-MIDDLEWARE_DISPATCH_SQL = (
-    ROOT / "sql" / "middleware_dispatch.sql"
-).read_text(encoding="utf-8")
 
+REQUEST_PIPELINE_SQL = (
+    ROOT / "sql" / "request_pipeline.sql"
+).read_text(encoding="utf-8")
 
 def initialize_database(database_path):
     """Create the database and seed default routes."""
@@ -65,39 +60,38 @@ def make_handler(database_path):
                     timeout=5.0,
                 ) as connection:
 
-                    decision = connection.execute(
-                        MIDDLEWARE_DISPATCH_SQL,
+                    pipeline_row = connection.execute(
+                        REQUEST_PIPELINE_SQL,
                         {
                             "method": "GET",
                             "path": path,
                         },
                     ).fetchone()
 
-                    if decision is None:
+                    if pipeline_row is None:
                         raise RuntimeError(
-                            "Middleware returned no decision"
+                            "SQL pipeline returned no response"
                         )
 
-                    action, mw_status, mw_type, mw_body = decision
+                    (
+                        action,
+                        status,
+                        content_type,
+                        body,
+                        location,
+                        effective_path,
+                    ) = pipeline_row
 
-                    if action == "DENY":
-                        result = (
-                            mw_status,
-                            mw_type,
-                            mw_body,
-                        )
-                    elif action == "ALLOW":
-                        result = connection.execute(
-                            DISPATCH_SQL,
-                            {
-                                "method": "GET",
-                                "path": path,
-                            },
-                        ).fetchone()
-                    else:
+                    if action not in ("ALLOW", "DENY"):
                         raise RuntimeError(
-                            "Unsupported middleware action"
+                            "Unsupported pipeline action"
                         )
+
+                    result = (
+                        status,
+                        content_type,
+                        body,
+                    )
 
                 if result is None:
                     raise RuntimeError(

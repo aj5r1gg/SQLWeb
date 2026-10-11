@@ -11,7 +11,7 @@ from urllib.error import HTTPError
 from urllib.request import urlopen
 
 from server import (
-    MIDDLEWARE_DISPATCH_SQL,
+    REQUEST_PIPELINE_SQL,
     initialize_database,
     make_handler,
 )
@@ -30,7 +30,7 @@ class MiddlewareBoundaryTests(unittest.TestCase):
     def test_injection_is_not_executed(self):
         with sqlite3.connect(self.database) as db:
             result = db.execute(
-                MIDDLEWARE_DISPATCH_SQL,
+                REQUEST_PIPELINE_SQL,
                 {
                     "method": "GET",
                     "path": "' OR 1=1 --",
@@ -55,7 +55,7 @@ class MiddlewareBoundaryTests(unittest.TestCase):
                 )
 
             result = db.execute(
-                MIDDLEWARE_DISPATCH_SQL,
+                REQUEST_PIPELINE_SQL,
                 {"method": "GET", "path": "/health"},
             ).fetchone()
 
