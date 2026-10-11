@@ -2,6 +2,7 @@
 
 import importlib.util
 import sqlite3
+from contextlib import closing
 import subprocess
 import sys
 import tempfile
@@ -27,7 +28,7 @@ class MigrationUpgradeTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = Path(self.tmp.name) / "test.db"
 
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db, db:
             db.executescript(SCHEMA.read_text(encoding="utf-8"))
             db.execute(
                 """
@@ -46,7 +47,7 @@ class MigrationUpgradeTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def records(self):
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db, db:
             return db.execute(
                 """
                 SELECT rule_id, priority, enabled, method, path,
@@ -57,7 +58,7 @@ class MigrationUpgradeTests(unittest.TestCase):
             ).fetchall()
 
     def columns(self):
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db, db:
             return [
                 row[1] for row in db.execute(
                     "PRAGMA table_info(middleware_rules)"
@@ -93,6 +94,8 @@ class MigrationUpgradeTests(unittest.TestCase):
                 "--database",
                 str(self.db_path),
                 "--apply",
+                "--backup",
+                str(Path(self.tmp.name) / "test-backup.db"),
             ],
             capture_output=True,
             text=True,
@@ -122,7 +125,7 @@ class MigrationUpgradeTests(unittest.TestCase):
         self.assertEqual(self.records(), before)
 
     def test_04_unknown_schema_rejected(self):
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db, db:
             db.execute("DROP INDEX middleware_rules_lookup")
 
         before = self.records()
@@ -134,7 +137,7 @@ class MigrationUpgradeTests(unittest.TestCase):
         self.assertNotIn("destination", self.columns())
 
     def test_05_foreign_key_dependency_rejected(self):
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db, db:
             db.execute(
                 """
                 CREATE TABLE dependent (
@@ -181,7 +184,7 @@ class MigrationUpgradeTests(unittest.TestCase):
         self.assertEqual(self.records(), before)
         self.assertNotIn("destination", self.columns())
 
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db, db:
             self.assertEqual(
                 db.execute("PRAGMA integrity_check")
                 .fetchone()[0],
@@ -190,7 +193,7 @@ class MigrationUpgradeTests(unittest.TestCase):
 
 
     def test_07_view_dependency_rejected(self):
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db, db:
             db.execute(
                 "CREATE VIEW rule_summary AS "
                 "SELECT rule_id FROM middleware_rules"
@@ -207,7 +210,7 @@ class MigrationUpgradeTests(unittest.TestCase):
         self.assertNotIn("destination", self.columns())
 
     def test_08_trigger_dependency_rejected(self):
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db, db:
             db.executescript("""
                 CREATE TABLE audit_log (message TEXT);
                 CREATE TRIGGER audit_route_change
@@ -226,6 +229,89 @@ class MigrationUpgradeTests(unittest.TestCase):
         ):
             upgrade.upgrade(self.db_path)
 
+        self.assertEqual(self.records(), before)
+        self.assertNotIn("destination", self.columns())
+
+
+    def test_09_backup_restores_original_database(self):
+        backup = Path(self.tmp.name) / "verified-backup.db"
+        restored = Path(self.tmp.name) / "restored.db"
+        before = self.records()
+
+        result = subprocess.run(
+            [
+                sys.executable, str(TOOL),
+                "--database", str(self.db_path),
+                "--apply",
+                "--backup", str(backup),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        self.assertEqual(
+            result.returncode, 0,
+            result.stdout + result.stderr,
+        )
+        self.assertTrue(backup.is_file())
+        self.assertIn("destination", self.columns())
+
+        with closing(sqlite3.connect(backup)) as db, db:
+            self.assertEqual(
+                db.execute("PRAGMA integrity_check").fetchone()[0],
+                "ok",
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT * FROM middleware_rules ORDER BY rule_id"
+                ).fetchall(),
+                before,
+            )
+            self.assertNotIn(
+                "destination",
+                [
+                    row[1]
+                    for row in db.execute(
+                        "PRAGMA table_info(middleware_rules)"
+                    )
+                ],
+            )
+            with closing(sqlite3.connect(restored)) as target, target:
+                db.backup(target)
+
+        with closing(sqlite3.connect(restored)) as db, db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT * FROM middleware_rules ORDER BY rule_id"
+                ).fetchall(),
+                before,
+            )
+            self.assertEqual(
+                db.execute("PRAGMA integrity_check").fetchone()[0],
+                "ok",
+            )
+
+    def test_10_existing_backup_is_not_overwritten(self):
+        backup = Path(self.tmp.name) / "existing-backup.db"
+        original_bytes = b"DO NOT OVERWRITE THIS FILE"
+        backup.write_bytes(original_bytes)
+        before = self.records()
+
+        result = subprocess.run(
+            [
+                sys.executable, str(TOOL),
+                "--database", str(self.db_path),
+                "--apply",
+                "--backup", str(backup),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(backup.read_bytes(), original_bytes)
         self.assertEqual(self.records(), before)
         self.assertNotIn("destination", self.columns())
 

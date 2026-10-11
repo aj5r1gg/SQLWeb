@@ -1,7 +1,9 @@
 """Explicit, fail-closed SQLWeb middleware v1 -> v2 upgrade."""
 
 import argparse
+import os
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,7 +21,7 @@ def fingerprint(db):
 
 
 def expected_schema():
-    with sqlite3.connect(":memory:") as db:
+    with closing(sqlite3.connect(":memory:")) as db, db:
         db.executescript(SCHEMA.read_text(encoding="utf-8"))
         return fingerprint(db)
 
@@ -144,6 +146,40 @@ def upgrade(path):
         db.close()
 
 
+def create_backup(source, destination):
+    """Create a separate, verified SQLite backup without overwriting."""
+    source = source.resolve()
+    destination = destination.resolve()
+
+    if not source.is_file():
+        raise ValueError("Source database does not exist")
+    if source == destination:
+        raise ValueError("Backup cannot be the source database")
+
+    fd = os.open(
+        destination,
+        os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+        0o600,
+    )
+    os.close(fd)
+
+    try:
+        with closing(sqlite3.connect(source)) as original, original:
+            with closing(sqlite3.connect(destination)) as backup, backup:
+                original.backup(backup)
+
+        with closing(sqlite3.connect(destination)) as check, check:
+            if check.execute(
+                "PRAGMA integrity_check"
+            ).fetchone()[0] != "ok":
+                raise ValueError("Backup integrity check failed")
+
+        print(f"PASS: Verified backup created: {destination}")
+    except Exception:
+        destination.unlink()
+        raise
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--database", type=Path, required=True)
@@ -151,11 +187,19 @@ def main():
         "--apply", action="store_true",
         help="Explicitly authorise migration",
     )
+    parser.add_argument(
+        "--backup", type=Path,
+        help="Required new backup file for --apply",
+    )
     args = parser.parse_args()
 
     if not args.apply:
         parser.error("No changes made: --apply is required")
 
+    if args.backup is None:
+        parser.error("--backup is required with --apply")
+
+    create_backup(args.database, args.backup)
     upgrade(args.database)
 
 
