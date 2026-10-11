@@ -17,6 +17,40 @@ REQUEST_PIPELINE_SQL = (ROOT / "sql/request_pipeline.sql").read_text(
 )
 
 
+REQUEST_PIPELINE_V2_SQL = (
+    ROOT / "sql/request_pipeline_v2_candidate.sql"
+).read_text(encoding="utf-8")
+
+
+def select_request_pipeline(db):
+    """Choose the SQL pipeline from the middleware schema format."""
+    columns = [
+        row[1]
+        for row in db.execute(
+            "PRAGMA table_info(middleware_rules)"
+        )
+    ]
+
+    legacy = [
+        "rule_id",
+        "priority",
+        "enabled",
+        "method",
+        "path",
+        "action",
+        "status",
+        "content_type",
+        "body",
+    ]
+
+    if columns == legacy:
+        return REQUEST_PIPELINE_SQL
+
+    if columns == legacy + ["destination"]:
+        return REQUEST_PIPELINE_V2_SQL
+
+    raise ValueError("Unsupported middleware schema")
+
 def initialize_database(path):
     with closing(sqlite3.connect(path)) as db:
         db.executescript(ROUTES)
@@ -34,8 +68,9 @@ def make_handler(database_path):
                 with closing(sqlite3.connect(
                     database_path, timeout=5.0
                 )) as db:
+                    pipeline = select_request_pipeline(db)
                     response = db.execute(
-                        REQUEST_PIPELINE_SQL,
+                        pipeline,
                         {
                             "method": self.command,
                             "path": urlsplit(self.path).path,
