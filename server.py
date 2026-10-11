@@ -18,7 +18,7 @@ REQUEST_PIPELINE_SQL = (ROOT / "sql/request_pipeline.sql").read_text(
 
 
 REQUEST_PIPELINE_V2_SQL = (
-    ROOT / "sql/request_pipeline_v2_candidate.sql"
+    ROOT / "sql/request_pipeline_v2.sql"
 ).read_text(encoding="utf-8")
 
 
@@ -44,7 +44,7 @@ def expected_middleware_fingerprints():
         legacy = middleware_fingerprint(db)
 
         migration = (
-            ROOT / "sql/middleware_migrate_v2_candidate.sql"
+            ROOT / "sql/middleware_upgrade_v2.sql"
         ).read_text(encoding="utf-8")
 
         db.executescript(migration)

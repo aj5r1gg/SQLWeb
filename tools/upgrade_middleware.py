@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = ROOT / "sql/middleware_schema.sql"
-MIGRATION = ROOT / "sql/middleware_migrate_v2_candidate.sql"
+MIGRATION = ROOT / "sql/middleware_upgrade_v2.sql"
 
 
 def fingerprint(db):

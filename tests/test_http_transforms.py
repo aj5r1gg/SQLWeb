@@ -29,7 +29,7 @@ class HTTPTransformTests(unittest.TestCase):
 
             with sqlite3.connect(cls.db_path) as db:
                 db.executescript(
-                    (SQL / "middleware_migrate_v2_candidate.sql")
+                    (SQL / "middleware_upgrade_v2.sql")
                     .read_text(encoding="utf-8")
                 )
 
@@ -62,7 +62,7 @@ class HTTPTransformTests(unittest.TestCase):
                 )
 
             cls.pipeline = (
-                SQL / "request_pipeline_v2_candidate.sql"
+                SQL / "request_pipeline_v2.sql"
             ).read_text(encoding="utf-8")
 
             cls.httpd = ThreadingHTTPServer(
