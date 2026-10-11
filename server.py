@@ -42,10 +42,10 @@ def make_handler(database_path):
                         },
                     ).fetchone()
 
-                if response is None or len(response) != 6:
+                if response is None or len(response) != 7:
                     raise ValueError("Invalid SQL response")
 
-                _, status, content_type, body, _, _ = response
+                _, status, content_type, body, _, _, allow = response
 
                 if type(status) is not int or not 200 <= status <= 599:
                     raise ValueError("Invalid HTTP status")
@@ -58,18 +58,25 @@ def make_handler(database_path):
                 if not isinstance(body, str):
                     raise ValueError("Invalid response body")
 
+                if allow is not None:
+                    if not isinstance(allow, str) or not allow:
+                        raise ValueError("Invalid Allow header")
+                    if any(c in allow for c in "\r\n\0"):
+                        raise ValueError("Unsafe Allow header")
+
                 payload = body.encode("utf-8")
 
             except (sqlite3.Error, ValueError, TypeError,
                     UnicodeError) as error:
                 self.log_error("SQL dispatch failure: %s", error)
                 status = 500
+                allow = None
                 content_type = "text/plain; charset=utf-8"
                 payload = b"500: Igor has encountered a complication."
 
             self.send_response(status)
-            if status == 405:
-                self.send_header("Allow", "GET")
+            if allow is not None:
+                self.send_header("Allow", allow)
             if self.command == "POST":
                 self.close_connection = True
                 self.send_header("Connection", "close")

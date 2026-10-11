@@ -99,6 +99,11 @@ SELECT
 
     NULL AS location,
 
-    (SELECT path FROM request_input) AS effective_path
+    (SELECT path FROM request_input) AS effective_path,
+
+    CASE
+        WHEN :method <> 'GET' THEN 'GET'
+        ELSE NULL
+    END AS allow_methods
 
 FROM decision AS d;
