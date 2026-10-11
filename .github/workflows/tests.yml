@@ -1,0 +1,36 @@
+name: SQLWeb Integration Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: HTTP Regression Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Verify environment
+        run: |
+          python --version
+          python -c "import sqlite3; print(sqlite3.sqlite_version)"
+
+      - name: Check Python syntax
+        run: |
+          python -m py_compile server.py tests/test_sqlweb.py
+
+      - name: Run HTTP integration tests
+        run: |
+          python -m unittest discover -s tests -v
